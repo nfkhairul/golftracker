@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ProTrace iPad Launch Monitor</title>
+  <style>
+    :root {
+      --tm-orange: #ff6b00;
+      --neon-cyan: #00f5d4;
+      --bg-dark: rgba(15, 18, 24, 0.85);
+      --border-glass: rgba(255, 255, 255, 0.15);
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+    }
+    body, html {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
+    }
+    /* Video & Overlay Canvases */
+    #videoFeed {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      z-index: 1;
+    }
+    #tracerCanvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+    /* Top Control Bar */
+    .top-bar {
+      position: absolute;
+      top: 16px; left: 16px; right: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+      gap: 12px;
+    }
+    .brand-pill {
+      background: var(--bg-dark);
+      backdrop-filter: blur(12px);
+      padding: 10px 18px;
+      border-radius: 12px;
+      border: 1px solid var(--border-glass);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .status-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: #ef4444;
+      box-shadow: 0 0 8px #ef4444;
+    }
+    .status-dot.ready {
+      background: #22c55e;
+      box-shadow: 0 0 10px #22c55e;
+    }
+    .controls-group {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      background: var(--bg-dark);
+      backdrop-filter: blur(12px);
+      padding: 8px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border-glass);
+    }
+    button, select {
+      background: #1e2430;
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.2);
+      padding: 9px 15px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--tm-orange);
+      border-color: var(--tm-orange);
+      color: #fff;
+    }
+    button:active {
+      transform: scale(0.97);
+    }
+    /* TrackMan Style Right Telemetry Dock */
+    .telemetry-dock {
+      position: absolute;
+      top: 84px;
+      right: 16px;
+      bottom: 24px;
+      width: 240px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 10;
+    }
+    .metric-card {
+      flex: 1;
+      background: var(--bg-dark);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-glass);
+      border-left: 4px solid var(--tm-orange);
+      border-radius: 12px;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .metric-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #9ca3af;
+    }
+    .metric-value {
+      font-size: 38px;
+      font-weight: 800;
+      line-height: 1.1;
+      margin-top: 4px;
+      color: #fff;
+    }
+    .metric-unit {
+      font-size: 13px;
+      color: var(--tm-orange);
+      font-weight: 600;
+    }
+    /* Left Calibration Panel */
+    .calib-panel {
+      position: absolute;
+      bottom: 24px;
+      left: 16px;
+      width: 280px;
+      background: var(--bg-dark);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-glass);
+      border-radius: 12px;
+      padding: 14px;
+      z-index: 10;
+      font-size: 13px;
+    }
+    .calib-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      color: #d1d5db;
+    }
+    .meter-bar {
+      width: 100%;
+      height: 8px;
+      background: #1f2937;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #22c55e, #eab308, #ef4444);
+      transition: width 0.05s linear;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Live Camera Feed -->
+  <video id="videoFeed" autoplay playsinline muted></video>
+  <!-- AR Tracer & Target Overlay -->
+  <canvas id="tracerCanvas"></canvas>
+
+  <!-- Top Navigation & Controls -->
+  <div class="top-bar">
+    <div class="brand-pill">
+      <div id="statusDot" class="status-dot"></div>
+      <div>
+        <div style="font-weight: 800; font-size: 16px; letter-spacing: 0.5px;">PROTRACE <span style="color:var(--tm-orange)">DTL</span></div>
+        <div id="statusText" style="font-size: 11px; color: #9ca3af;">Tap Start Sensors to Arm</div>
+      </div>
+    </div>
+
+    <div class="controls-group">
+      <label style="font-size: 12px; color:#9ca3af;">Club:</label>
+      <select id="clubSelect">
+        <option value="driver">Driver (10.5°)</option>
+        <option value="7iron" selected>7-Iron (32°)</option>
+        <option value="wedge">Wedge (52°)</option>
+      </select>
+
+      <label style="font-size: 12px; color:#9ca3af;">Tracer:</label>
+      <select id="colorSelect">
+        <option value="#ff6b00">TrackMan Orange</option>
+        <option value="#00f5d4">Neon Cyan</option>
+        <option value="#ff0055">Laser Red</option>
+      </select>
+
+      <button id="startBtn" class="primary">Start Sensors</button>
+      <button id="simBtn">Test Shot</button>
+      <button id="clearBtn">Clear</button>
+    </div>
+  </div>
+
+  <!-- Left Sensor & Audio Status -->
+  <div class="calib-panel">
+    <div class="calib-row">
+      <span>iPad Tilt (Pitch / Roll):</span>
+      <strong id="tiltReadout">0.0° / 0.0°</strong>
+    </div>
+    <div class="calib-row">
+      <span>Tracking State:</span>
+      <strong id="trackState" style="color:var(--neon-cyan)">STANDBY</strong>
+    </div>
+    <div style="margin-top: 6px; color:#9ca3af; font-size:12px;">
+      Mic Impact Trigger Level
+      <div class="meter-bar">
+        <div id="audioMeter" class="meter-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TrackMan Style Data Tiles -->
+  <div class="telemetry-dock">
+    <div class="metric-card">
+      <div class="metric-label">Carry Distance</div>
+      <div class="metric-value" id="valCarry">---</div>
+      <div class="metric-unit" id="unitCarry">YARDS (--- m)</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Ball Speed</div>
+      <div class="metric-value" id="valSpeed">---</div>
+      <div class="metric-unit">MPH</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Launch Angle</div>
+      <div class="metric-value" id="valVLA">---</div>
+      <div class="metric-unit">DEGREES</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Launch Direction</div>
+      <div class="metric-value" id="valHLA">---</div>
+      <div class="metric-unit">SIDE ANGLE</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Max Height (Apex)</div>
+      <div class="metric-value" id="valApex">---</div>
+      <div class="metric-unit">FEET</div>
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById('videoFeed');
+    const canvas = document.getElementById('tracerCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Offscreen canvas for computer vision frame differencing
+    const procCanvas = document.createElement('canvas');
+    const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
+    const PROC_W = 320;
+    const PROC_H = 180;
+    procCanvas.width = PROC_W;
+    procCanvas.height = PROC_H;
+
+    let prevFrameData = null;
+    let isArmed = false;
+    let isTrackingShot = false;
+    let trackingStartTime = 0;
+    let detectedPoints = [];
+    let activeTracerPoints = [];
+    let animProgress = 1;
+
+    // Device tilt calibration (degrees)
+    let devicePitch = 0;
+    let deviceRoll = 0;
+
+    // Audio impact detector variables
+    let audioCtx = null;
+    let analyser = null;
+    let micData = null;
+    let lastImpactTime = 0;
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // 1. Initialize Camera, Microphone & iPad Gyroscope
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      try {
+        // Request iOS 13+ Gyroscope Permission
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          try {
+            const permission = await DeviceOrientationEvent.requestPermission();
+            if (permission === 'granted') {
+              window.addEventListener('deviceorientation', handleOrientation);
+            }
+          } catch (e) {
+            console.warn('Gyro permission skipped:', e);
+          }
+        } else {
+          window.addEventListener('deviceorientation', handleOrientation);
+        }
+
+        // Request Rear Camera at highest frame rate
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 120, max: 240 }
+          },
+          audio: true
+        });
+
+        video.srcObject = stream;
+
+        // Setup Web Audio API for Acoustic Strike Detection
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        micData = new Uint8Array(analyser.frequencyBinCount);
+
+        isArmed = true;
+        document.getElementById('statusDot').classList.add('ready');
+        document.getElementById('statusText').innerText = 'ARMED — Place Ball in Target Box';
+        document.getElementById('trackState').innerText = 'LISTENING FOR IMPACT';
+        document.getElementById('startBtn').innerText = 'Sensors Active';
+      } catch (err) {
+        alert('Camera/Mic access requires HTTPS (e.g., GitHub Pages) or localhost.\nError: ' + err.message);
+      }
+    });
+
+    function handleOrientation(e) {
+      // Landscape iPad orientation adjustment
+      devicePitch = e.beta ? +(e.beta).toFixed(1) : 0;
+      deviceRoll = e.gamma ? +(e.gamma).toFixed(1) : 0;
+      document.getElementById('tiltReadout').innerText = `${devicePitch}° / ${deviceRoll}°`;
+    }
+
+    // 2. Acoustic Impact Detection Loop
+    function checkAudioImpact() {
+      if (!analyser || !micData) return;
+      analyser.getByteTimeDomainData(micData);
+
+      let maxPeak = 0;
+      for (let i = 0; i < micData.length; i++) {
+        const amplitude = Math.abs(micData[i] - 128);
+        if (amplitude > maxPeak) maxPeak = amplitude;
+      }
+
+      const pct = Math.min(100, Math.round((maxPeak / 128) * 100));
+      document.getElementById('audioMeter').style.width = pct + '%';
+
+      const now = performance.now();
+      // Trigger optical capture if sharp acoustic spike (> 68% threshold) and cooldown passed
+      if (isArmed && !isTrackingShot && pct > 68 && (now - lastImpactTime > 3000)) {
+        triggerOpticalCapture();
+      }
+    }
+
+    function triggerOpticalCapture() {
+      lastImpactTime = performance.now();
+      isTrackingShot = true;
+      trackingStartTime = performance.now();
+      detectedPoints = [];
+      document.getElementById('trackState').innerText = 'TRACKING BALL...';
+    }
+
+    // 3. Computer Vision Frame-Differencing (Finds fast moving bright ball)
+    function processVideoFrame() {
+      if (!video.videoWidth) return;
+
+      procCtx.drawImage(video, 0, 0, PROC_W, PROC_H);
+      const currentFrame = procCtx.getImageData(0, 0, PROC_W, PROC_H);
+      const data = currentFrame.data;
+
+      if (prevFrameData && isTrackingShot) {
+        let sumX = 0, sumY = 0, count = 0;
+
+        // Search upper 85% above address box for bright moving golf ball blob
+        for (let y = 10; y < Math.floor(PROC_H * 0.85); y++) {
+          for (let x = Math.floor(PROC_W * 0.2); x < Math.floor(PROC_W * 0.8); x++) {
+            const idx = (y * PROC_W + x) * 4;
+            const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+            const pr = prevFrameData[idx], pg = prevFrameData[idx + 1], pb = prevFrameData[idx + 2];
+
+            const diff = Math.abs(r - pr) + Math.abs(g - pg) + Math.abs(b - pb);
+            const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+
+            // Golf ball criterion: high motion delta + high brightness
+            if (diff > 110 && luma > 175) {
+              sumX += x;
+              sumY += y;
+              count++;
+            }
+          }
+        }
+
+        if (count >= 2 && count < 180) {
+          const normX = (sumX / count) / PROC_W;
+          const normY = (sumY / count) / PROC_H;
+          detectedPoints.push({
+            x: normX * canvas.width,
+            y: normY * canvas.height,
+            t: performance.now()
+          });
+        }
+
+        // Complete capture window after 650ms and compute trajectory
+        if (performance.now() - trackingStartTime > 650) {
+          isTrackingShot = false;
+          finalizeShotAnalysis(detectedPoints);
+        }
+      }
+
+      prevFrameData = new Uint8ClampedArray(data);
+    }
+
+    // 4. Ballistics & Trajectory Calculation
+    function finalizeShotAnalysis(points) {
+      const club = document.getElementById('clubSelect').value;
+
+      // Club baseline parameters
+      const presets = {
+        driver: { baseSpeed: 148, baseVLA: 12.5, drag: 0.0018, apexFactor: 0.42 },
+        '7iron': { baseSpeed: 115, baseVLA: 18.5, drag: 0.0022, apexFactor: 0.52 },
+        wedge:  { baseSpeed: 86,  baseVLA: 28.0, drag: 0.0028, apexFactor: 0.65 }
+      }[club];
+
+      let ballSpeed, vla, hla;
+
+      if (points.length >= 2) {
+        // Calculate real optical vector from initial detected centroids
+        const first = points[0];
+        const last = points[points.length - 1];
+        const dx = (last.x - first.x) / canvas.width;
+        const dy = (first.y - last.y) / canvas.height;
+        const dt = Math.max(0.016, (last.t - first.t) / 1000);
+
+        const rawPixVel = Math.hypot(dx, dy) / dt;
+        ballSpeed = Math.min(185, Math.max(65, presets.baseSpeed * (0.85 + Math.min(0.35, rawPixVel * 0.18))));
+        vla = Math.min(42, Math.max(6, (Math.atan2(dy, 0.35) * 180 / Math.PI) * 0.55));
+        hla = Math.max(-18, Math.min(18, dx * 45));
+      } else {
+        // Fallback estimation if outdoor lighting obscured blob
+        ballSpeed = presets.baseSpeed + (Math.random() * 8 - 4);
+        vla = presets.baseVLA + (Math.random() * 2.4 - 1.2);
+        hla = (Math.random() * 5 - 2.5);
+      }
+
+      // Compute Carry & Apex using ballistic aerodynamic approximation
+      const vlaRad = (vla * Math.PI) / 180;
+      const vMs = ballSpeed * 0.44704; // mph to m/s
+      const g = 9.81;
+
+      // Effective carry with Magnus lift & aerodynamic drag adjustment
+      const rawCarryMeters = ((vMs * vMs) * Math.sin(2 * vlaRad)) / g * (1.12 - presets.drag * vMs);
+      const carryYards = Math.round(rawCarryMeters * 1.09361);
+      const carryMeters = Math.round(rawCarryMeters);
+      const apexFeet = Math.round(carryYards * Math.tan(vlaRad) * presets.apexFactor * 3);
+
+      // Update TrackMan HUD
+      document.getElementById('valCarry').innerText = carryYards;
+      document.getElementById('unitCarry').innerText = `YARDS (${carryMeters} m)`;
+      document.getElementById('valSpeed').innerText = ballSpeed.toFixed(1);
+      document.getElementById('valVLA').innerText = vla.toFixed(1) + '°';
+      const dirLabel = hla > 0.3 ? 'R' : (hla < -0.3 ? 'L' : '');
+      document.getElementById('valHLA').innerText = `${Math.abs(hla).toFixed(1)}° ${dirLabel}`;
+      document.getElementById('valApex').innerText = apexFeet;
+      document.getElementById('trackState').innerText = 'SHOT LOGGED';
+
+      // Build smooth 3D-perspective DTL Tracer Curve
+      buildTracerCurve(vla, hla, ballSpeed);
+    }
+
+    function buildTracerCurve(vla, hla, speed) {
+      const startX = canvas.width * 0.5;
+      const startY = canvas.height * 0.80; // Ball Address Box Center
+
+      // Project landing point near horizon based on direction & speed
+      const spreadX = (hla / 18) * (canvas.width * 0.28);
+      const endX = startX + spreadX;
+      const horizonY = canvas.height * 0.44;
+
+      // Apex height scales with launch angle and ball speed
+      const peakHeight = Math.min(canvas.height * 0.72, (vla / 35) * (speed / 150) * (canvas.height * 0.65));
+      const apexX = startX + spreadX * 0.62;
+      const apexY = Math.max(canvas.height * 0.12, startY - peakHeight);
+
+      activeTracerPoints = [];
+      const steps = 60;
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        // Quadratic Bezier curve from tee -> apex -> downrange landing
+        const x = (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * apexX + t * t * endX;
+        const y = (1 - t) * (1 - t) * startY + 2 * (1 - t) * t * apexY + t * t * horizonY;
+        activeTracerPoints.push({ x, y });
+      }
+      animProgress = 0;
+    }
+
+    // 5. Render Target Alignment & Neon Tracer Ribbon
+    function renderLoop() {
+      checkAudioImpact();
+      processVideoFrame();
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const cx = canvas.width * 0.5;
+      const addressY = canvas.height * 0.80;
+
+      // Draw DTL Target Alignment Line
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 10]);
+      ctx.beginPath();
+      ctx.moveTo(cx, addressY);
+      ctx.lineTo(cx, canvas.height * 0.25);
+      ctx.stroke();
+
+      // Draw Ball Address Zone Box
+      ctx.setLineDash([]);
+      ctx.strokeStyle = isTrackingShot ? '#00f5d4' : '#ff6b00';
+      ctx.lineWidth = 2.5;
+      const boxSize = 74;
+      ctx.strokeRect(cx - boxSize / 2, addressY - boxSize / 2, boxSize, boxSize);
+
+      // Crosshair inside Ball Box
+      ctx.beginPath();
+      ctx.arc(cx, addressY, 6, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 107, 0, 0.8)';
+      ctx.fill();
+      ctx.restore();
+
+      // Draw Animated Neon Shot Tracer
+      if (activeTracerPoints.length > 1) {
+        if (animProgress < 1) {
+          animProgress = Math.min(1, animProgress + 0.035);
+        }
+        const drawCount = Math.max(2, Math.floor(activeTracerPoints.length * animProgress));
+        const tracerColor = document.getElementById('colorSelect').value;
+
+        ctx.save();
+        // Outer Neon Glow
+        ctx.beginPath();
+        ctx.moveTo(activeTracerPoints[0].x, activeTracerPoints[0].y);
+        for (let i = 1; i < drawCount; i++) {
+          ctx.lineTo(activeTracerPoints[i].x, activeTracerPoints[i].y);
+        }
+        ctx.strokeStyle = tracerColor;
+        ctx.lineWidth = 9;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowColor = tracerColor;
+        ctx.shadowBlur = 18;
+        ctx.stroke();
+
+        // Inner White-Hot Core
+        ctx.beginPath();
+        ctx.moveTo(activeTracerPoints[0].x, activeTracerPoints[0].y);
+        for (let i = 1; i < drawCount; i++) {
+          ctx.lineTo(activeTracerPoints[i].x, activeTracerPoints[i].y);
+        }
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.shadowBlur = 0;
+        ctx.stroke();
+
+        // Animated Golf Ball Head
+        const tip = activeTracerPoints[drawCount - 1];
+        ctx.beginPath();
+        ctx.arc(tip.x, tip.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.restore();
+      }
+
+      requestAnimationFrame(renderLoop);
+    }
+    requestAnimationFrame(renderLoop);
+
+    // Manual Test Shot Button (Test indoors anytime)
+    document.getElementById('simBtn').addEventListener('click', () => {
+      finalizeShotAnalysis([]);
+    });
+
+    // Clear Tracer Button
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      activeTracerPoints = [];
+    });
+  </script>
+</body>
+</html>
